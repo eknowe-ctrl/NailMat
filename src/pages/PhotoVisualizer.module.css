@@ -97,6 +97,30 @@
   transition: width 0.3s ease;
 }
 
+/* Capture bar (camera mode) */
+.captureBar {
+  position: absolute;
+  bottom: 20px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+}
+.captureBtn {
+  padding: 14px 32px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 24px rgba(176,110,255,.45);
+  transition: transform .15s, box-shadow .15s;
+}
+.captureBtn:active {
+  transform: scale(.96);
+  box-shadow: 0 2px 12px rgba(176,110,255,.3);
+}
+
 /* Status badge */
 .badge {
   position: absolute;
