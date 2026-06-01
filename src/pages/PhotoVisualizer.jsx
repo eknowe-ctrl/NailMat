@@ -199,6 +199,80 @@ function drawNail(ctx, tip, dip, nailW, s, W, H) {
   ctx.restore()
 }
 
+// ─── Pixel-level nail edge detection ─────────────────────────────────────────
+// Scans perpendicular to the finger axis and finds where brightness changes
+// significantly — marking the nail/skin boundary.
+
+function pixelBrightness(data, w, h, x, y) {
+  if (x < 0 || x >= w || y < 0 || y >= h) return -1
+  const i = (~~y * w + ~~x) * 4
+  return 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+}
+
+function scanHalfWidth(data, w, h, cx, cy, perpX, perpY, maxHW) {
+  const maxD = Math.ceil(maxHW) + 6
+  const samp = new Float32Array(maxD * 2 + 1).fill(-1)
+  const C = maxD
+
+  for (let d = -maxD; d <= maxD; d++)
+    samp[C + d] = pixelBrightness(data, w, h, cx + perpX * d, cy + perpY * d)
+
+  // Center brightness (average over ±2 px)
+  let cb = 0, n = 0
+  for (let d = -2; d <= 2; d++) { if (samp[C + d] >= 0) { cb += samp[C + d]; n++ } }
+  cb /= Math.max(n, 1)
+
+  // Adaptive threshold: nail/skin contrast varies across skin tones
+  let lo = 255, hi = 0
+  for (let d = -maxD; d <= maxD; d++) { if (samp[C + d] >= 0) { lo = Math.min(lo, samp[C + d]); hi = Math.max(hi, samp[C + d]) } }
+  const thresh = Math.max(10, (hi - lo) * 0.22)
+
+  // Walk outward from center, find first significant brightness change
+  let hw = maxHW
+  for (let d = 2; d <= maxD - 1; d++) {
+    const bL = samp[C - d], bR = samp[C + d]
+    if (bL < 0 || bR < 0) { hw = d - 1; break }
+    if (Math.abs(cb - bL) > thresh || Math.abs(cb - bR) > thresh) { hw = d; break }
+  }
+  return Math.max(hw, 2)
+}
+
+// Returns pixel-refined nail width using 3 scanlines across the nail ROI.
+// Reads from the canvas BEFORE any nail overlays are drawn.
+function refineNailWidth(ctx, cx, cy, angle, estW, estH, W, H) {
+  const axX = Math.cos(angle), axY = Math.sin(angle)
+  const perpX = -axY,          perpY = axX
+
+  // Bounding box for the scan strip (wider than estimated nail)
+  const scanW = Math.ceil(estW * 1.5) + 8
+  const scanH = Math.ceil(estH * 0.8)
+  const cos = Math.abs(axX), sin = Math.abs(axY)
+  const bbW  = Math.ceil(scanW * sin + scanH * cos) + 4
+  const bbH  = Math.ceil(scanW * cos + scanH * sin) + 4
+  const x0   = Math.max(0, Math.floor(cx - bbW / 2))
+  const y0   = Math.max(0, Math.floor(cy - bbH / 2))
+  const x1   = Math.min(W, x0 + bbW)
+  const y1   = Math.min(H, y0 + bbH)
+  if (x1 <= x0 || y1 <= y0) return estW
+
+  const { data } = ctx.getImageData(x0, y0, x1 - x0, y1 - y0)
+  const rW = x1 - x0, rH = y1 - y0
+
+  // Scan at 3 heights: –30%, 0%, +25% along nail axis (avoids cuticle & tip)
+  const offsets = [-estH * 0.28, 0, estH * 0.22]
+  const hws = offsets.map(off => {
+    const scx = cx + axX * off - x0
+    const scy = cy + axY * off - y0
+    return scanHalfWidth(data, rW, rH, scx, scy, perpX, perpY, estW * 0.62)
+  }).filter(v => v > estW * 0.15)
+
+  if (!hws.length) return estW * 0.72
+  hws.sort((a, b) => a - b)
+  return hws[Math.floor(hws.length / 2)] * 2  // median half-width → full width
+}
+
+// ─── Frame renderer ───────────────────────────────────────────────────────────
+
 function renderFrame(canvas, source, hands, s, mirror = false) {
   const W = canvas.width, H = canvas.height
   const ctx = canvas.getContext('2d')
@@ -208,14 +282,35 @@ function renderFrame(canvas, source, hands, s, mirror = false) {
   } else {
     ctx.drawImage(source, 0, 0, W, H)
   }
+
+  // ── Phase 1: compute all nail specs from the CLEAN source image ──
+  // We read pixels BEFORE any overlay is drawn so nails don't affect each other.
+  const specs = []
   for (const hand of hands) {
-    const lms = mirror ? hand.map(lm => ({ x: 1 - lm.x, y: lm.y, z: lm.z })) : hand
-    const widths = computeNailWidths(lms, W, H)
+    const lms      = mirror ? hand.map(lm => ({ x: 1 - lm.x, y: lm.y, z: lm.z })) : hand
+    const baseW    = computeNailWidths(lms, W, H)
+
     for (let i = 0; i < NAIL_CFG.length; i++) {
-      const cfg = NAIL_CFG[i]
-      drawNail(ctx, lms[cfg.t], lms[cfg.b], widths[i], s, W, H)
+      const { t, b }  = NAIL_CFG[i]
+      const tip = lms[t], dip = lms[b]
+      const tx = tip.x * W, ty = tip.y * H
+      const bx = dip.x * W, by = dip.y * H
+      const segLen    = Math.hypot(tx - bx, ty - by)
+      if (segLen < 4) continue
+      const angle     = Math.atan2(ty - by, tx - bx)
+      const nH        = segLen * 0.92
+      const cx        = tx * 0.54 + bx * 0.46
+      const cy        = ty * 0.54 + by * 0.46
+
+      // Pixel-level refinement: find actual nail edges in the source image
+      const nailW = refineNailWidth(ctx, cx, cy, angle, baseW[i], nH, W, H)
+      specs.push({ tip, dip, nailW })
     }
   }
+
+  // ── Phase 2: draw all nails using refined widths ──
+  for (const { tip, dip, nailW } of specs)
+    drawNail(ctx, tip, dip, nailW, s, W, H)
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
