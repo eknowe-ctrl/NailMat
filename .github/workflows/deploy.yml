@@ -25,6 +25,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Download ONNX model from release
+        run: |
+          mkdir -p dist/models
+          curl -L https://github.com/eknowe-ctrl/NailMat/releases/download/v1.0-model/nails_seg.onnx \
+            -o dist/models/nails_seg.onnx
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

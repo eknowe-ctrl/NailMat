@@ -3,7 +3,7 @@ import * as ort from 'onnxruntime-web'
 // Use CDN WASM so we don't bundle it
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/'
 
-const MODEL_PATH   = 'https://github.com/eknowe-ctrl/NailMat/releases/download/v1.0-model/nails_seg.onnx'
+const MODEL_PATH   = `${import.meta.env.BASE_URL}models/nails_seg.onnx`
 const INPUT_SZ     = 320
 const PROTO_SZ     = 80   // mask prototype resolution (INPUT_SZ / 4)
 const N_MASK_COEF  = 32
