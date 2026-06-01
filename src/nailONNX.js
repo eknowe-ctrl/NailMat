@@ -262,12 +262,11 @@ function buildRefinedMaskCanvas(mask, source, ix1, iy1, ix2, iy2, ow, oh) {
   return mc
 }
 
-// ── shape clip ────────────────────────────────────────────────────────────────
-// Intersects the ONNX mask with the selected shape using destination-in.
+// ── shape paths ───────────────────────────────────────────────────────────────
 // Shapes are defined in bbox coords: tip at y=0, cuticle at y=oh.
+// Used for both clipping (round/square) and extension fill (almond/stiletto/coffin).
 
-function applyShapeClip(ctx, ow, oh, shape) {
-  ctx.globalCompositeOperation = 'destination-in'
+function drawShapePath(ctx, ow, oh, shape) {
   ctx.beginPath()
   switch (shape) {
     case 'square':
@@ -298,6 +297,11 @@ function applyShapeClip(ctx, ow, oh, shape) {
     default: // round
       ctx.roundRect(ow*.04, 0, ow*.92, oh, [ow*.46, ow*.46, ow*.06, ow*.06])
   }
+}
+
+function applyShapeClip(ctx, ow, oh, shape) {
+  ctx.globalCompositeOperation = 'destination-in'
+  drawShapePath(ctx, ow, oh, shape)
   ctx.fill()
   ctx.globalCompositeOperation = 'source-over'
 }
@@ -315,26 +319,42 @@ function drawDetection(ctx, det, scaleX, scaleY, settings, source) {
 
   const ow = Math.ceil(sw), oh = Math.ceil(sh)
 
+  // Extension shapes grow the nail tip upward to simulate nail extensions.
+  // extH = additional pixels above the natural nail tip; totalH = full canvas height.
+  const extH   = /almond|stiletto|coffin/.test(settings.shape) ? Math.round(oh * 0.55) : 0
+  const totalH = oh + extH
+
   // ── 1. Build edge-refined mask canvas (ow×oh) ─────────────────────────────────
   const mc = buildRefinedMaskCanvas(mask, source, ix1, iy1, ix2, iy2, ow, oh)
   if (!mc) return
 
-  // ── 2. Offscreen canvas (screen-size bbox) ────────────────────────────────────
+  // ── 2. Offscreen canvas (ow × totalH) ────────────────────────────────────────
   const oc   = document.createElement('canvas')
-  oc.width   = ow; oc.height = oh
+  oc.width   = ow; oc.height = totalH
   const oCtx = oc.getContext('2d')
 
-  oCtx.drawImage(mc, 0, 0)   // mc already at ow×oh with refined alpha
+  // Draw mask shifted down by extH; 2px spread covers natural nail edge pixels.
+  const SP = 2
+  oCtx.drawImage(mc, -SP, extH - SP, ow + SP*2, oh + SP*2)
 
-  // ── 3. Apply shape clip (intersect mask × shape) ──────────────────────────────
-  applyShapeClip(oCtx, ow, oh, settings.shape)
+  // For extension shapes: fill the extension zone (0→extH) via source-over union.
+  // This adds pixels above the natural tip without removing the mask below.
+  if (extH > 0) {
+    oCtx.globalCompositeOperation = 'source-over'
+    oCtx.fillStyle = '#fff'
+    drawShapePath(oCtx, ow, totalH, settings.shape)
+    oCtx.fill()
+  }
 
-  // ── 4. Fill nail color inside mask×shape ─────────────────────────────────────
+  // ── 3. Clip outer boundary to shape ───────────────────────────────────────────
+  applyShapeClip(oCtx, ow, totalH, settings.shape)
+
+  // ── 4. Fill nail color ────────────────────────────────────────────────────────
   const [r, g, b] = hexToRgb(settings.color)
   oCtx.globalCompositeOperation = 'source-in'
 
   if (settings.design === 'foil') {
-    const fg = oCtx.createLinearGradient(0, 0, ow, oh)
+    const fg = oCtx.createLinearGradient(0, 0, ow, totalH)
     fg.addColorStop(0,    '#FFD700')
     fg.addColorStop(0.28, '#E8E8E8')
     fg.addColorStop(0.5,  `rgb(${r},${g},${b})`)
@@ -344,14 +364,14 @@ function drawDetection(ctx, det, scaleX, scaleY, settings, source) {
   } else {
     oCtx.fillStyle = `rgb(${r},${g},${b})`
   }
-  oCtx.fillRect(0, 0, ow, oh)
+  oCtx.fillRect(0, 0, ow, totalH)
   oCtx.globalCompositeOperation = 'source-over'
 
   // ── 5. Design overlays (source-atop = clipped to nail pixels) ────────────────
   oCtx.globalCompositeOperation = 'source-atop'
 
   if (settings.design === 'french') {
-    const tipH = oh * 0.30
+    const tipH = totalH * 0.28
     const tG = oCtx.createLinearGradient(0, 0, 0, tipH * 1.2)
     tG.addColorStop(0,    'rgba(255,252,245,.96)')
     tG.addColorStop(0.65, 'rgba(255,252,245,.86)')
@@ -363,87 +383,76 @@ function drawDetection(ctx, det, scaleX, scaleY, settings, source) {
   if (settings.design === 'luna') {
     oCtx.fillStyle = 'rgba(255,255,255,.40)'
     oCtx.beginPath()
-    oCtx.ellipse(ow*.5, oh*.82, ow*.32, oh*.13, 0, 0, Math.PI*2)
+    oCtx.ellipse(ow*.5, totalH*.82, ow*.32, totalH*.13, 0, 0, Math.PI*2)
     oCtx.fill()
   }
 
   // ── 6. Base shadows ───────────────────────────────────────────────────────────
-
-  // Left / right edge darkening — nail surface curves like a cylinder
   const sideSh = oCtx.createLinearGradient(0, 0, ow, 0)
-  sideSh.addColorStop(0,    'rgba(0,0,0,.30)')
-  sideSh.addColorStop(.22,  'rgba(0,0,0,0)')
-  sideSh.addColorStop(.78,  'rgba(0,0,0,0)')
-  sideSh.addColorStop(1,    'rgba(0,0,0,.30)')
+  sideSh.addColorStop(0,   'rgba(0,0,0,.30)')
+  sideSh.addColorStop(.22, 'rgba(0,0,0,0)')
+  sideSh.addColorStop(.78, 'rgba(0,0,0,0)')
+  sideSh.addColorStop(1,   'rgba(0,0,0,.30)')
   oCtx.fillStyle = sideSh
-  oCtx.fillRect(0, 0, ow, oh)
+  oCtx.fillRect(0, 0, ow, totalH)
 
-  // Cuticle fold shadow — nail plate disappears under skin at the base
-  const cutFade = oCtx.createLinearGradient(0, oh * .56, 0, oh)
+  const cutFade = oCtx.createLinearGradient(0, totalH * .56, 0, totalH)
   cutFade.addColorStop(0, 'rgba(0,0,0,0)')
   cutFade.addColorStop(1, 'rgba(0,0,0,.40)')
   oCtx.fillStyle = cutFade
-  oCtx.fillRect(0, oh * .56, ow, oh * .44)
+  oCtx.fillRect(0, totalH * .56, ow, totalH * .44)
 
-  // Subsurface scattering — warm glow where finger skin shows through thin nail
-  const sss = oCtx.createRadialGradient(ow*.5, oh*.64, 0, ow*.5, oh*.64, ow*.55)
+  const sss = oCtx.createRadialGradient(ow*.5, totalH*.64, 0, ow*.5, totalH*.64, ow*.55)
   sss.addColorStop(0, 'rgba(255,155,120,.08)')
   sss.addColorStop(1, 'rgba(255,155,120,0)')
   oCtx.fillStyle = sss
-  oCtx.fillRect(0, oh * .36, ow, oh * .64)
+  oCtx.fillRect(0, totalH * .36, ow, totalH * .64)
 
   // ── 7. Finish ─────────────────────────────────────────────────────────────────
   if (settings.finish === 'Глянцевый') {
-    // Primary specular — narrow angled ellipse, like a studio lamp reflection
-    // Real glossy nails show a bright elongated streak, NOT a round blob
-    const hx = ow * .36, hy = oh * .20
-    const specG = oCtx.createRadialGradient(hx, hy, 0, hx, hy + oh*.05, ow*.24)
+    const hx = ow * .36, hy = totalH * .20
+    const specG = oCtx.createRadialGradient(hx, hy, 0, hx, hy + totalH*.05, ow*.24)
     specG.addColorStop(0,   'rgba(255,255,255,.92)')
     specG.addColorStop(.22, 'rgba(255,255,255,.60)')
     specG.addColorStop(.55, 'rgba(255,255,255,.15)')
     specG.addColorStop(1,   'rgba(255,255,255,0)')
     oCtx.fillStyle = specG
     oCtx.beginPath()
-    // Ellipse: narrow (ow*0.16 wide, oh*0.065 tall), rotated -11°
-    oCtx.ellipse(hx, hy, ow*.16, oh*.065, -.18, 0, Math.PI*2)
+    oCtx.ellipse(hx, hy, ow*.16, totalH*.065, -.18, 0, Math.PI*2)
     oCtx.fill()
 
-    // Secondary broad ambient — faint center glow (wet-look)
-    const ambG = oCtx.createRadialGradient(ow*.5, oh*.30, 0, ow*.5, oh*.36, ow*.58)
+    const ambG = oCtx.createRadialGradient(ow*.5, totalH*.30, 0, ow*.5, totalH*.36, ow*.58)
     ambG.addColorStop(0, 'rgba(255,255,255,.13)')
     ambG.addColorStop(1, 'rgba(255,255,255,0)')
     oCtx.fillStyle = ambG
-    oCtx.fillRect(0, 0, ow, oh * .68)
+    oCtx.fillRect(0, 0, ow, totalH * .68)
 
-    // Rim light — thin bright line at free edge (tip grazes the light source)
-    const rimG = oCtx.createLinearGradient(0, 0, 0, oh * .055)
+    const rimG = oCtx.createLinearGradient(0, 0, 0, totalH * .055)
     rimG.addColorStop(0, 'rgba(255,255,255,.28)')
     rimG.addColorStop(1, 'rgba(255,255,255,0)')
     oCtx.fillStyle = rimG
-    oCtx.fillRect(0, 0, ow, oh * .055)
+    oCtx.fillRect(0, 0, ow, totalH * .055)
 
   } else { // Матовый
-    // No specular — matte lacquer scatters light uniformly
-    const diffG = oCtx.createRadialGradient(ow*.5, oh*.28, 0, ow*.5, oh*.35, ow*.62)
+    const diffG = oCtx.createRadialGradient(ow*.5, totalH*.28, 0, ow*.5, totalH*.35, ow*.62)
     diffG.addColorStop(0, 'rgba(255,255,255,.07)')
     diffG.addColorStop(1, 'rgba(255,255,255,0)')
     oCtx.fillStyle = diffG
-    oCtx.fillRect(0, 0, ow, oh * .65)
+    oCtx.fillRect(0, 0, ow, totalH * .65)
 
-    // Velvety edge darkening — characteristic of matte finish
-    const velvet = oCtx.createRadialGradient(ow*.5, oh*.44, ow*.14, ow*.5, oh*.44, ow*.88)
+    const velvet = oCtx.createRadialGradient(ow*.5, totalH*.44, ow*.14, ow*.5, totalH*.44, ow*.88)
     velvet.addColorStop(0, 'rgba(0,0,0,0)')
     velvet.addColorStop(1, 'rgba(0,0,0,.16)')
     oCtx.fillStyle = velvet
-    oCtx.fillRect(0, 0, ow, oh)
+    oCtx.fillRect(0, 0, ow, totalH)
   }
 
   oCtx.globalCompositeOperation = 'source-over'
 
-  // ── 8. Composite onto main canvas ────────────────────────────────────────────
+  // ── 8. Composite onto main canvas (shift up by extH for the extension) ────────
   ctx.save()
   ctx.globalAlpha = settings.opacity
-  ctx.drawImage(oc, sx1, sy1)
+  ctx.drawImage(oc, sx1, sy1 - extH)
   ctx.restore()
 }
 
