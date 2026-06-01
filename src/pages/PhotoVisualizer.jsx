@@ -397,7 +397,7 @@ export default function PhotoVisualizer() {
       setPhase('ready')
     } catch (e) {
       console.error(e)
-      setError('Не удалось обработать фото. Попробуйте другое изображение.')
+      setError(`Ошибка: ${e?.message ?? String(e)}`)
       setPhase('idle')
     }
   }, [stopCamera])
