@@ -1,6 +1,7 @@
 import * as ort from 'onnxruntime-web'
 
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/'
+ort.env.wasm.wasmPaths  = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/'
+ort.env.wasm.numThreads = 1   // GitHub Pages lacks COOP/COEP headers → no SharedArrayBuffer
 
 const MODEL_PATH  = `${import.meta.env.BASE_URL}models/nails_seg.onnx`
 const INPUT_SZ    = 320
