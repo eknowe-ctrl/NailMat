@@ -230,34 +230,74 @@ function drawDetection(ctx, det, scaleX, scaleY, settings) {
     oCtx.fill()
   }
 
-  // ── 6. 3D edge shading ────────────────────────────────────────────────────────
+  // ── 6. Base shadows ───────────────────────────────────────────────────────────
+
+  // Left / right edge darkening — nail surface curves like a cylinder
   const sideSh = oCtx.createLinearGradient(0, 0, ow, 0)
-  sideSh.addColorStop(0,   'rgba(0,0,0,.22)')
-  sideSh.addColorStop(.18, 'rgba(0,0,0,0)')
-  sideSh.addColorStop(.82, 'rgba(0,0,0,0)')
-  sideSh.addColorStop(1,   'rgba(0,0,0,.22)')
+  sideSh.addColorStop(0,    'rgba(0,0,0,.30)')
+  sideSh.addColorStop(.22,  'rgba(0,0,0,0)')
+  sideSh.addColorStop(.78,  'rgba(0,0,0,0)')
+  sideSh.addColorStop(1,    'rgba(0,0,0,.30)')
   oCtx.fillStyle = sideSh
   oCtx.fillRect(0, 0, ow, oh)
 
-  const cutFade = oCtx.createLinearGradient(0, oh*.55, 0, oh)
+  // Cuticle fold shadow — nail plate disappears under skin at the base
+  const cutFade = oCtx.createLinearGradient(0, oh * .56, 0, oh)
   cutFade.addColorStop(0, 'rgba(0,0,0,0)')
-  cutFade.addColorStop(1, 'rgba(0,0,0,.28)')
+  cutFade.addColorStop(1, 'rgba(0,0,0,.40)')
   oCtx.fillStyle = cutFade
-  oCtx.fillRect(0, 0, ow, oh)
+  oCtx.fillRect(0, oh * .56, ow, oh * .44)
+
+  // Subsurface scattering — warm glow where finger skin shows through thin nail
+  const sss = oCtx.createRadialGradient(ow*.5, oh*.64, 0, ow*.5, oh*.64, ow*.55)
+  sss.addColorStop(0, 'rgba(255,155,120,.08)')
+  sss.addColorStop(1, 'rgba(255,155,120,0)')
+  oCtx.fillStyle = sss
+  oCtx.fillRect(0, oh * .36, ow, oh * .64)
 
   // ── 7. Finish ─────────────────────────────────────────────────────────────────
   if (settings.finish === 'Глянцевый') {
-    const gloss = oCtx.createRadialGradient(ow*.22, oh*.1, 0, ow*.22, oh*.1, ow*.85)
-    gloss.addColorStop(0,   'rgba(255,255,255,.48)')
-    gloss.addColorStop(.38, 'rgba(255,255,255,.14)')
-    gloss.addColorStop(1,   'rgba(255,255,255,0)')
-    oCtx.fillStyle = gloss
-    oCtx.fillRect(0, 0, ow, oh)
-  } else {
-    const matte = oCtx.createRadialGradient(ow*.5, oh*.5, ow*.1, ow*.5, oh*.5, ow*.85)
-    matte.addColorStop(0, 'rgba(0,0,0,0)')
-    matte.addColorStop(1, 'rgba(0,0,0,.18)')
-    oCtx.fillStyle = matte
+    // Primary specular — narrow angled ellipse, like a studio lamp reflection
+    // Real glossy nails show a bright elongated streak, NOT a round blob
+    const hx = ow * .36, hy = oh * .20
+    const specG = oCtx.createRadialGradient(hx, hy, 0, hx, hy + oh*.05, ow*.24)
+    specG.addColorStop(0,   'rgba(255,255,255,.92)')
+    specG.addColorStop(.22, 'rgba(255,255,255,.60)')
+    specG.addColorStop(.55, 'rgba(255,255,255,.15)')
+    specG.addColorStop(1,   'rgba(255,255,255,0)')
+    oCtx.fillStyle = specG
+    oCtx.beginPath()
+    // Ellipse: narrow (ow*0.16 wide, oh*0.065 tall), rotated -11°
+    oCtx.ellipse(hx, hy, ow*.16, oh*.065, -.18, 0, Math.PI*2)
+    oCtx.fill()
+
+    // Secondary broad ambient — faint center glow (wet-look)
+    const ambG = oCtx.createRadialGradient(ow*.5, oh*.30, 0, ow*.5, oh*.36, ow*.58)
+    ambG.addColorStop(0, 'rgba(255,255,255,.13)')
+    ambG.addColorStop(1, 'rgba(255,255,255,0)')
+    oCtx.fillStyle = ambG
+    oCtx.fillRect(0, 0, ow, oh * .68)
+
+    // Rim light — thin bright line at free edge (tip grazes the light source)
+    const rimG = oCtx.createLinearGradient(0, 0, 0, oh * .055)
+    rimG.addColorStop(0, 'rgba(255,255,255,.28)')
+    rimG.addColorStop(1, 'rgba(255,255,255,0)')
+    oCtx.fillStyle = rimG
+    oCtx.fillRect(0, 0, ow, oh * .055)
+
+  } else { // Матовый
+    // No specular — matte lacquer scatters light uniformly
+    const diffG = oCtx.createRadialGradient(ow*.5, oh*.28, 0, ow*.5, oh*.35, ow*.62)
+    diffG.addColorStop(0, 'rgba(255,255,255,.07)')
+    diffG.addColorStop(1, 'rgba(255,255,255,0)')
+    oCtx.fillStyle = diffG
+    oCtx.fillRect(0, 0, ow, oh * .65)
+
+    // Velvety edge darkening — characteristic of matte finish
+    const velvet = oCtx.createRadialGradient(ow*.5, oh*.44, ow*.14, ow*.5, oh*.44, ow*.88)
+    velvet.addColorStop(0, 'rgba(0,0,0,0)')
+    velvet.addColorStop(1, 'rgba(0,0,0,.16)')
+    oCtx.fillStyle = velvet
     oCtx.fillRect(0, 0, ow, oh)
   }
 
