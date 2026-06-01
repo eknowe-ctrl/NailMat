@@ -12,9 +12,28 @@ const IOU_THRESH   = 0.40
 
 let _session = null
 
-export async function loadNailModel() {
+export async function loadNailModel(onProgress) {
   if (_session) return _session
-  _session = await ort.InferenceSession.create(MODEL_PATH, {
+
+  const resp  = await fetch(MODEL_PATH)
+  const total = Number(resp.headers.get('content-length')) || 0
+  const reader = resp.body.getReader()
+  const chunks = []
+  let received = 0
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    received += value.length
+    if (onProgress && total) onProgress(received / total)
+  }
+
+  const buf = new Uint8Array(received)
+  let off = 0
+  for (const c of chunks) { buf.set(c, off); off += c.length }
+
+  _session = await ort.InferenceSession.create(buf.buffer, {
     executionProviders: ['wasm'],
     graphOptimizationLevel: 'all',
   })
@@ -217,8 +236,8 @@ function drawDetection(ctx, det, scaleX, scaleY, settings) {
 
 // ── public API ────────────────────────────────────────────────────────────────
 
-export async function segmentAndRender(canvas, source, settings) {
-  const session = await loadNailModel()
+export async function segmentAndRender(canvas, source, settings, onProgress) {
+  const session = await loadNailModel(onProgress)
   const W = canvas.width, H = canvas.height
   const ctx = canvas.getContext('2d')
 

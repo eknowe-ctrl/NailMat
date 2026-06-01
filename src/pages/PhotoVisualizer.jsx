@@ -317,6 +317,7 @@ export default function PhotoVisualizer() {
   const [phase,    setPhase]    = useState('idle')
   const [detected, setDetected] = useState(0)
   const [error,    setError]    = useState(null)
+  const [loadPct,  setLoadPct]  = useState(0)
 
   const [color,   setColor]   = useState('#B06EFF')
   const [shape,   setShape]   = useState('round')
@@ -375,8 +376,7 @@ export default function PhotoVisualizer() {
     stopCamera()
     setError(null); setPhase('loading')
     try {
-      // Pre-warm ONNX model in parallel with image load
-      const modelPromise = loadNailModel()
+      setLoadPct(0)
 
       const url = URL.createObjectURL(file)
       const img = new Image()
@@ -388,10 +388,11 @@ export default function PhotoVisualizer() {
       canvas.height    = img.naturalHeight
       imageRef.current = img
 
-      await modelPromise  // ensure ONNX is ready
-
-      // ML segmentation: detects nail masks directly from pixels
-      const count = await segmentAndRender(canvas, img, settingsRef.current)
+      // ML segmentation with download progress
+      const count = await segmentAndRender(
+        canvas, img, settingsRef.current,
+        pct => setLoadPct(Math.round(pct * 100))
+      )
       setDetected(count)
 
       setPhase('ready')
@@ -506,8 +507,19 @@ export default function PhotoVisualizer() {
             {phase === 'loading' && (
               <div className={styles.overlay}>
                 <div className={styles.spinner} />
-                <p className={styles.overlayText}>Загружаем модель и ищем ногти…</p>
-                <p className={styles.overlayHint}>Первый запуск ~10 сек</p>
+                {loadPct > 0 && loadPct < 100 ? (
+                  <>
+                    <p className={styles.overlayText}>Загружаем модель… {loadPct}%</p>
+                    <div className={styles.progressBar}>
+                      <div className={styles.progressFill} style={{ width: `${loadPct}%` }} />
+                    </div>
+                    <p className={styles.overlayHint}>45 МБ · только первый раз</p>
+                  </>
+                ) : loadPct === 100 ? (
+                  <p className={styles.overlayText}>Анализируем ногти…</p>
+                ) : (
+                  <p className={styles.overlayText}>Подготовка…</p>
+                )}
               </div>
             )}
 
