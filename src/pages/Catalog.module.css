@@ -1,0 +1,94 @@
+.pageHeader { margin-bottom: 28px; }
+.title { font-size: 2rem; margin: 10px 0 8px; }
+.sub { color: var(--text-secondary); max-width: 480px; }
+
+.filters { display: flex; flex-direction: column; gap: 12px; margin-bottom: 28px; }
+.search { max-width: 360px; }
+
+.cityRow { display: flex; flex-wrap: wrap; gap: 8px; }
+.cityPill {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 0.84rem;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+  font-family: inherit;
+}
+.cityPill:hover { border-color: var(--accent-dim); color: var(--text-primary); }
+.cityActive { border-color: var(--accent); background: var(--accent-glow); color: var(--accent); }
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+/* Brand list */
+.brandList { display: flex; flex-direction: column; gap: 12px; }
+.empty { color: var(--text-muted); padding: 24px 0; }
+
+.brandCard {
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.2s, transform 0.15s;
+  background: none;
+  width: 100%;
+  color: inherit;
+  font-family: inherit;
+}
+.brandCard:hover { transform: translateX(3px); }
+.brandActive { border-color: var(--accent) !important; background: var(--bg-hover) !important; }
+
+.brandHeader { display: flex; align-items: center; gap: 14px; }
+.brandLogo { font-size: 1.8rem; flex-shrink: 0; }
+.brandInfo { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.brandName { font-size: 1.05rem; font-weight: 700; color: var(--text-primary); }
+.brandCountry { font-size: 0.78rem; color: var(--text-muted); }
+.brandCount { font-size: 0.8rem; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.brandDesc { font-size: 0.87rem; color: var(--text-secondary); line-height: 1.55; }
+
+/* Detail */
+.detail { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 80px; }
+.detailCard { display: flex; flex-direction: column; gap: 14px; }
+.detailHeader { display: flex; align-items: center; gap: 14px; }
+.detailName { font-size: 1.3rem; font-weight: 700; }
+.distTitle { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
+
+.distList { display: flex; flex-direction: column; gap: 12px; }
+.distItem {
+  background: var(--bg-hover);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.distCity { font-size: 0.75rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; }
+.distName { font-size: 0.95rem; font-weight: 600; color: var(--text-primary); }
+.distAddress { font-size: 0.82rem; color: var(--text-secondary); }
+.distPhone { font-size: 0.9rem; color: var(--accent); margin-top: 4px; font-weight: 500; }
+.distPhone:hover { color: var(--text-primary); }
+
+.detailEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 180px;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.ad { height: 90px; }

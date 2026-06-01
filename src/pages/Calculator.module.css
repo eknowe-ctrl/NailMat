@@ -1,0 +1,100 @@
+.pageHeader { margin-bottom: 36px; }
+.title { font-size: 2rem; margin: 10px 0 8px; }
+.sub { color: var(--text-secondary); max-width: 480px; }
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+/* Form */
+.form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+.fieldCard { display: flex; flex-direction: column; gap: 6px; }
+.fieldLabel {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.fieldUnit { color: var(--accent); font-size: 0.8rem; }
+.fieldHint { color: var(--text-muted); font-size: 0.78rem; margin-bottom: 4px; }
+
+/* Result */
+.resultPanel { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 80px; }
+.resultCard { display: flex; flex-direction: column; gap: 18px; }
+.resultTitle { font-size: 1.2rem; font-weight: 700; }
+
+.breakdown { display: flex; flex-direction: column; gap: 8px; }
+.breakdownRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+.breakdownTotal {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.highlight {
+  background: var(--accent-glow);
+  border: 1px solid var(--accent-dim);
+  border-radius: 12px;
+  padding: 16px 20px;
+  text-align: center;
+}
+.highlightLabel { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 4px; }
+.highlightValue { font-size: 2rem; font-weight: 800; color: var(--accent); }
+
+.metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.metric {
+  background: var(--bg-hover);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+}
+.metricLabel { font-size: 0.78rem; color: var(--text-muted); margin-bottom: 4px; }
+.metricValue { font-size: 1.3rem; font-weight: 700; }
+.positive { color: var(--success); }
+.negative { color: #f87171; }
+
+.barWrap {
+  background: var(--bg-hover);
+  border-radius: 999px;
+  height: 8px;
+  position: relative;
+  overflow: hidden;
+}
+.barFill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+.barLabel {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  text-align: right;
+}
+
+.tip {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.ad { height: 90px; }
