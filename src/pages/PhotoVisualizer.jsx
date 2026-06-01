@@ -4,15 +4,25 @@ import styles from './PhotoVisualizer.module.css'
 const MP_CDN    = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18'
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
 
-// t = fingertip, b = DIP joint (joint right before tip — this is where the nail starts)
-// Using DIP (not PIP) gives correct nail size and position
+// t = fingertip, b = DIP joint (last knuckle — where the nail starts)
 const NAIL_CFG = [
-  { t: 4,  b: 3,  ws: 0.88 }, // thumb
-  { t: 8,  b: 7,  ws: 0.80 }, // index
-  { t: 12, b: 11, ws: 0.80 }, // middle
-  { t: 16, b: 15, ws: 0.76 }, // ring
-  { t: 20, b: 19, ws: 0.68 }, // pinky
+  { t: 4,  b: 3  }, // thumb
+  { t: 8,  b: 7  }, // index
+  { t: 12, b: 11 }, // middle
+  { t: 16, b: 15 }, // ring
+  { t: 20, b: 19 }, // pinky
 ]
+
+// Width fractions relative to MCP knuckle span (lm5→lm17).
+// MCP joints are stable regardless of finger spread → reliable width reference.
+// Empirical ratios: adult nail width / hand knuckle span.
+const NAIL_W_FRACS = [0.20, 0.16, 0.18, 0.16, 0.12]
+
+function computeNailWidths(lms, W, H) {
+  const px = i => [lms[i].x * W, lms[i].y * H]
+  const span = Math.hypot(px(5)[0]-px(17)[0], px(5)[1]-px(17)[1])
+  return NAIL_W_FRACS.map(f => span * f)
+}
 
 const PALETTE = [
   '#FADADD','#F4A7B9','#E8A0BF','#C780C8','#9B59B6',
@@ -69,23 +79,26 @@ function buildPath(shape, w, h) {
 
 // ─── Nail renderer ────────────────────────────────────────────────────────────
 
-function drawNail(ctx, tip, dip, ws, s, W, H) {
+function drawNail(ctx, tip, dip, nailW, s, W, H) {
   const tx = tip.x * W, ty = tip.y * H
   const bx = dip.x * W, by = dip.y * H
   const dx = tx - bx, dy = ty - by
   const segLen = Math.hypot(dx, dy)
   if (segLen < 4) return
 
-  // Nail height ≈ DIP→TIP distance (+10% free-edge overhang)
-  const nH = segLen * 1.1
-  const nW = nH * ws
+  // Nail height: DIP→TIP covers exactly the distal phalanx where the nail lives.
+  // Factor 0.90 keeps the nail within that segment; free edge aligns with fingertip.
+  const nH = segLen * 0.92
+  const nW = nailW           // width comes from MCP-span reference
   const hh = nH / 2, hw = nW / 2
   const angle = Math.atan2(dy, dx)
 
-  // Place nail so free edge aligns with fingertip, cuticle at DIP
-  // center = tip - dir*(hH - segLen*0.05) = 0.55*tip + 0.45*dip  (approx)
-  const cx = tx * 0.55 + bx * 0.45
-  const cy = ty * 0.55 + by * 0.45
+  // cx = free edge at ~fingertip, cuticle at ~DIP
+  // With nH=0.92*segLen and center at 0.54*tip+0.46*dip:
+  //   free_edge = center + dir*hH ≈ tip + 0.08*segLen past tip  (tiny overhang)
+  //   cuticle   = center - dir*hH ≈ dip + 0.08*segLen toward tip (near DIP)
+  const cx = tx * 0.54 + bx * 0.46
+  const cy = ty * 0.54 + by * 0.46
 
   const path = buildPath(s.shape, nW, nH)
 
@@ -197,8 +210,11 @@ function renderFrame(canvas, source, hands, s, mirror = false) {
   }
   for (const hand of hands) {
     const lms = mirror ? hand.map(lm => ({ x: 1 - lm.x, y: lm.y, z: lm.z })) : hand
-    for (const cfg of NAIL_CFG)
-      drawNail(ctx, lms[cfg.t], lms[cfg.b], cfg.ws, s, W, H)
+    const widths = computeNailWidths(lms, W, H)
+    for (let i = 0; i < NAIL_CFG.length; i++) {
+      const cfg = NAIL_CFG[i]
+      drawNail(ctx, lms[cfg.t], lms[cfg.b], widths[i], s, W, H)
+    }
   }
 }
 
