@@ -1,14 +1,13 @@
 import * as ort from 'onnxruntime-web'
 
-// Use CDN WASM so we don't bundle it
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/'
 
-const MODEL_PATH   = `${import.meta.env.BASE_URL}models/nails_seg.onnx`
-const INPUT_SZ     = 320
-const PROTO_SZ     = 80   // mask prototype resolution (INPUT_SZ / 4)
-const N_MASK_COEF  = 32
-const CONF_THRESH  = 0.28
-const IOU_THRESH   = 0.40
+const MODEL_PATH  = `${import.meta.env.BASE_URL}models/nails_seg.onnx`
+const INPUT_SZ    = 320
+const PROTO_SZ    = 80
+const N_MASK_COEF = 32
+const CONF_THRESH = 0.28
+const IOU_THRESH  = 0.40
 
 let _session = null
 
@@ -40,7 +39,7 @@ export async function loadNailModel(onProgress) {
   return _session
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
 
 function sigmoid(x) { return 1 / (1 + Math.exp(-x)) }
 
@@ -66,16 +65,14 @@ function preprocess(source, W, H) {
   const { data } = tmp.getContext('2d').getImageData(0, 0, W, H)
   const t = new Float32Array(3 * W * H)
   for (let i = 0; i < W * H; i++) {
-    t[i]           = data[i*4]   / 255
-    t[W*H   + i]   = data[i*4+1] / 255
-    t[W*H*2 + i]   = data[i*4+2] / 255
+    t[i]         = data[i*4]   / 255
+    t[W*H   + i] = data[i*4+1] / 255
+    t[W*H*2 + i] = data[i*4+2] / 255
   }
   return new ort.Tensor('float32', t, [1, 3, H, W])
 }
 
 // ── post-processing ───────────────────────────────────────────────────────────
-// output0: [1, 37, 2100]  (4 bbox + 1 cls + 32 mask coefs)
-// output1: [1, 32, 80, 80] prototype masks
 
 function computeMask(coefs, protos) {
   const N = PROTO_SZ * PROTO_SZ
@@ -100,8 +97,6 @@ function postProcess(out0, out1) {
     for (let c = 0; c < N_MASK_COEF; c++) coefs[c] = out0[(5+c)*N+i]
     dets.push({ bbox:[cx-bw/2, cy-bh/2, cx+bw/2, cy+bh/2], score, coefs })
   }
-
-  // NMS
   dets.sort((a,b) => b.score - a.score)
   const kept = [], seen = new Set()
   for (let i = 0; i < dets.length; i++) {
@@ -110,48 +105,61 @@ function postProcess(out0, out1) {
     for (let j = i+1; j < dets.length; j++)
       if (iou(dets[i].bbox, dets[j].bbox) > IOU_THRESH) seen.add(j)
   }
-
-  // Compute masks only for kept detections (avoids waste)
   return kept.map(d => ({ ...d, mask: computeMask(d.coefs, out1) }))
 }
 
+// ── shape clip ────────────────────────────────────────────────────────────────
+// Intersects the ONNX mask with the selected shape using destination-in.
+// Shapes are defined in bbox coords: tip at y=0, cuticle at y=oh.
+
+function applyShapeClip(ctx, ow, oh, shape) {
+  ctx.globalCompositeOperation = 'destination-in'
+  ctx.beginPath()
+  switch (shape) {
+    case 'square':
+      ctx.roundRect(ow*.04, 0, ow*.92, oh, [ow*.08, ow*.08, ow*.05, ow*.05])
+      break
+    case 'almond':
+      ctx.moveTo(ow*.5, 0)
+      ctx.bezierCurveTo(ow*.78, oh*.18, ow*.92, oh*.48, ow*.88, oh)
+      ctx.lineTo(ow*.12, oh)
+      ctx.bezierCurveTo(ow*.08, oh*.48, ow*.22, oh*.18, ow*.5, 0)
+      ctx.closePath()
+      break
+    case 'stiletto':
+      ctx.moveTo(ow*.5, 0)
+      ctx.bezierCurveTo(ow*.62, oh*.1, ow*.88, oh*.38, ow*.85, oh)
+      ctx.lineTo(ow*.15, oh)
+      ctx.bezierCurveTo(ow*.12, oh*.38, ow*.38, oh*.1, ow*.5, 0)
+      ctx.closePath()
+      break
+    case 'coffin':
+      ctx.moveTo(ow*.2, 0)
+      ctx.lineTo(ow*.8, 0)
+      ctx.bezierCurveTo(ow*.9, oh*.3, ow*.9, oh*.65, ow*.87, oh)
+      ctx.lineTo(ow*.13, oh)
+      ctx.bezierCurveTo(ow*.1, oh*.65, ow*.1, oh*.3, ow*.2, 0)
+      ctx.closePath()
+      break
+    default: // round
+      ctx.roundRect(ow*.04, 0, ow*.92, oh, [ow*.46, ow*.46, ow*.06, ow*.06])
+  }
+  ctx.fill()
+  ctx.globalCompositeOperation = 'source-over'
+}
+
 // ── rendering ─────────────────────────────────────────────────────────────────
-
-function applyGloss(ctx, x1, y1, sw, sh) {
-  const g = ctx.createRadialGradient(x1+sw*.22, y1+sh*.18, 0, x1+sw*.22, y1+sh*.18, sw*.85)
-  g.addColorStop(0,   'rgba(255,255,255,.38)')
-  g.addColorStop(.4,  'rgba(255,255,255,.1)')
-  g.addColorStop(1,   'rgba(255,255,255,0)')
-  ctx.fillStyle = g
-  ctx.fillRect(x1, y1, sw, sh)
-}
-
-function applyFrench(ctx, maskCanvas, x1, y1, sw, sh) {
-  // White tip: top 22% of the mask bbox
-  ctx.save()
-  ctx.drawImage(maskCanvas, x1, y1, sw, sh) // redraw mask as clip proxy
-  const tipH = sh * 0.22
-  const g = ctx.createLinearGradient(x1, y1, x1, y1+tipH)
-  g.addColorStop(0,   'rgba(255,252,245,.92)')
-  g.addColorStop(.7,  'rgba(255,252,245,.88)')
-  g.addColorStop(1,   'rgba(255,252,245,0)')
-  ctx.globalAlpha = .92
-  ctx.fillStyle = g
-  ctx.fillRect(x1, y1, sw, tipH*1.1)
-  ctx.restore()
-}
 
 function drawDetection(ctx, det, scaleX, scaleY, settings) {
   const { bbox, mask } = det
   const [ix1, iy1, ix2, iy2] = bbox
 
-  // Screen coords
   const sx1 = ix1 * scaleX, sy1 = iy1 * scaleY
   const sw  = (ix2 - ix1) * scaleX
   const sh  = (iy2 - iy1) * scaleY
-  if (sw <= 0 || sh <= 0) return
+  if (sw < 4 || sh < 4) return
 
-  // Mask region in proto coords
+  // ── 1. Build clean binary mask canvas (proto-space crop) ────────────────────
   const mx1 = Math.max(0, Math.floor(ix1 * PROTO_SZ / INPUT_SZ))
   const my1 = Math.max(0, Math.floor(iy1 * PROTO_SZ / INPUT_SZ))
   const mx2 = Math.min(PROTO_SZ, Math.ceil(ix2 * PROTO_SZ / INPUT_SZ))
@@ -159,78 +167,106 @@ function drawDetection(ctx, det, scaleX, scaleY, settings) {
   const mw = mx2 - mx1, mh = my2 - my1
   if (mw <= 0 || mh <= 0) return
 
-  // Build mask canvas (cropped to bbox)
-  const mc = document.createElement('canvas')
-  mc.width = mw; mc.height = mh
+  const mc   = document.createElement('canvas')
+  mc.width   = mw; mc.height = mh
   const mCtx = mc.getContext('2d')
   const mData = mCtx.createImageData(mw, mh)
-  const [r, g, b] = hexToRgb(settings.color)
-
-  // Design: foil gradient fills
-  let fr = r, fg = g, fb = b
-  for (let my = 0; my < mh; my++) {
-    for (let mx = 0; mx < mw; mx++) {
-      const pi    = (my + my1) * PROTO_SZ + (mx + mx1)
-      const prob  = mask[pi]
-      if (prob < 0.25) continue
-      const alpha = Math.round(prob * settings.opacity * 255)
-      const ii    = (my * mw + mx) * 4
-
-      if (settings.design === 'foil') {
-        // Diagonal gradient through the nail
-        const t = (mx / mw + my / mh) / 2
-        fr = Math.round(255*t*0.8 + 192*(1-t)*0.8)
-        fg = Math.round(215*t*0.5 + 192*(1-t)*0.5)
-        fb = Math.round(0  *t     + 176*(1-t))
-      } else {
-        fr = r; fg = g; fb = b
-      }
-
-      mData.data[ii]   = fr
-      mData.data[ii+1] = fg
-      mData.data[ii+2] = fb
-      mData.data[ii+3] = alpha
+  for (let y = 0; y < mh; y++) {
+    for (let x = 0; x < mw; x++) {
+      if (mask[(y + my1) * PROTO_SZ + (x + mx1)] < 0.5) continue
+      const ii = (y * mw + x) * 4
+      mData.data[ii] = mData.data[ii+1] = mData.data[ii+2] = mData.data[ii+3] = 255
     }
   }
   mCtx.putImageData(mData, 0, 0)
 
-  // Composite onto main canvas (bilinear scaling built-in to drawImage)
-  ctx.save()
-  ctx.drawImage(mc, sx1, sy1, sw, sh)
+  // ── 2. Offscreen canvas (screen-size bbox) ───────────────────────────────────
+  const ow = Math.ceil(sw), oh = Math.ceil(sh)
+  const oc   = document.createElement('canvas')
+  oc.width   = ow; oc.height = oh
+  const oCtx = oc.getContext('2d')
 
-  // Luna: lighter half-moon near cuticle (bottom 20%)
-  if (settings.design === 'luna') {
-    ctx.globalAlpha = settings.opacity * .45
-    ctx.fillStyle   = 'rgba(255,255,255,.5)'
-    ctx.beginPath()
-    ctx.ellipse(sx1 + sw*.5, sy1 + sh*.8, sw*.32, sh*.14, 0, 0, Math.PI*2)
-    ctx.fill()
+  // Scale ONNX mask to screen size — bilinear interpolation anti-aliases edges
+  oCtx.drawImage(mc, 0, 0, mw, mh, 0, 0, ow, oh)
+
+  // ── 3. Apply shape clip (intersect mask × shape) ─────────────────────────────
+  applyShapeClip(oCtx, ow, oh, settings.shape)
+
+  // ── 4. Fill nail color inside mask×shape ─────────────────────────────────────
+  const [r, g, b] = hexToRgb(settings.color)
+  oCtx.globalCompositeOperation = 'source-in'
+
+  if (settings.design === 'foil') {
+    const fg = oCtx.createLinearGradient(0, 0, ow, oh)
+    fg.addColorStop(0,    '#FFD700')
+    fg.addColorStop(0.28, '#E8E8E8')
+    fg.addColorStop(0.5,  `rgb(${r},${g},${b})`)
+    fg.addColorStop(0.72, 'rgba(200,160,255,1)')
+    fg.addColorStop(1,    '#FFD700')
+    oCtx.fillStyle = fg
+  } else {
+    oCtx.fillStyle = `rgb(${r},${g},${b})`
   }
+  oCtx.fillRect(0, 0, ow, oh)
+  oCtx.globalCompositeOperation = 'source-over'
 
-  // French: white tip
+  // ── 5. Design overlays (source-atop = clipped to nail pixels) ────────────────
+  oCtx.globalCompositeOperation = 'source-atop'
+
   if (settings.design === 'french') {
-    ctx.globalAlpha = settings.opacity * .92
-    const tG = ctx.createLinearGradient(sx1, sy1, sx1, sy1 + sh*.28)
-    tG.addColorStop(0,   'rgba(255,252,245,.93)')
-    tG.addColorStop(.65, 'rgba(255,252,245,.85)')
-    tG.addColorStop(1,   'rgba(255,252,245,0)')
-    ctx.fillStyle = tG
-    ctx.drawImage(mc, sx1, sy1, sw, sh*.28)  // draw only top portion
+    const tipH = oh * 0.30
+    const tG = oCtx.createLinearGradient(0, 0, 0, tipH * 1.2)
+    tG.addColorStop(0,    'rgba(255,252,245,.96)')
+    tG.addColorStop(0.65, 'rgba(255,252,245,.86)')
+    tG.addColorStop(1,    'rgba(255,252,245,0)')
+    oCtx.fillStyle = tG
+    oCtx.fillRect(0, 0, ow, tipH * 1.2)
   }
 
-  // Gloss
-  if (settings.finish === 'Глянцевый') applyGloss(ctx, sx1, sy1, sw, sh)
-
-  // Matte vignette
-  if (settings.finish === 'Матовый') {
-    const vm = ctx.createRadialGradient(sx1+sw*.5, sy1+sh*.5, sw*.12, sx1+sw*.5, sy1+sh*.5, sw*.7)
-    vm.addColorStop(0, 'rgba(0,0,0,0)')
-    vm.addColorStop(1, 'rgba(0,0,0,.18)')
-    ctx.globalAlpha = settings.opacity
-    ctx.fillStyle   = vm
-    ctx.fillRect(sx1, sy1, sw, sh)
+  if (settings.design === 'luna') {
+    oCtx.fillStyle = 'rgba(255,255,255,.40)'
+    oCtx.beginPath()
+    oCtx.ellipse(ow*.5, oh*.82, ow*.32, oh*.13, 0, 0, Math.PI*2)
+    oCtx.fill()
   }
 
+  // ── 6. 3D edge shading ────────────────────────────────────────────────────────
+  const sideSh = oCtx.createLinearGradient(0, 0, ow, 0)
+  sideSh.addColorStop(0,   'rgba(0,0,0,.22)')
+  sideSh.addColorStop(.18, 'rgba(0,0,0,0)')
+  sideSh.addColorStop(.82, 'rgba(0,0,0,0)')
+  sideSh.addColorStop(1,   'rgba(0,0,0,.22)')
+  oCtx.fillStyle = sideSh
+  oCtx.fillRect(0, 0, ow, oh)
+
+  const cutFade = oCtx.createLinearGradient(0, oh*.55, 0, oh)
+  cutFade.addColorStop(0, 'rgba(0,0,0,0)')
+  cutFade.addColorStop(1, 'rgba(0,0,0,.28)')
+  oCtx.fillStyle = cutFade
+  oCtx.fillRect(0, 0, ow, oh)
+
+  // ── 7. Finish ─────────────────────────────────────────────────────────────────
+  if (settings.finish === 'Глянцевый') {
+    const gloss = oCtx.createRadialGradient(ow*.22, oh*.1, 0, ow*.22, oh*.1, ow*.85)
+    gloss.addColorStop(0,   'rgba(255,255,255,.48)')
+    gloss.addColorStop(.38, 'rgba(255,255,255,.14)')
+    gloss.addColorStop(1,   'rgba(255,255,255,0)')
+    oCtx.fillStyle = gloss
+    oCtx.fillRect(0, 0, ow, oh)
+  } else {
+    const matte = oCtx.createRadialGradient(ow*.5, oh*.5, ow*.1, ow*.5, oh*.5, ow*.85)
+    matte.addColorStop(0, 'rgba(0,0,0,0)')
+    matte.addColorStop(1, 'rgba(0,0,0,.18)')
+    oCtx.fillStyle = matte
+    oCtx.fillRect(0, 0, ow, oh)
+  }
+
+  oCtx.globalCompositeOperation = 'source-over'
+
+  // ── 8. Composite onto main canvas ────────────────────────────────────────────
+  ctx.save()
+  ctx.globalAlpha = settings.opacity
+  ctx.drawImage(oc, sx1, sy1)
   ctx.restore()
 }
 
@@ -247,11 +283,10 @@ export async function segmentAndRender(canvas, source, settings, onProgress) {
   const inputTensor = preprocess(source, INPUT_SZ, INPUT_SZ)
   const outputs = await session.run({ images: inputTensor })
   const keys = Object.keys(outputs)
-  const out0 = outputs[keys[0]].data   // [37 * 2100]
-  const out1 = outputs[keys[1]].data   // [32 * 80 * 80]
+  const out0 = outputs[keys[0]].data
+  const out1 = outputs[keys[1]].data
 
   const dets = postProcess(out0, out1)
-
   const scaleX = W / INPUT_SZ
   const scaleY = H / INPUT_SZ
 
