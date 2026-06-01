@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import styles from './PhotoVisualizer.module.css'
+import { segmentAndRender, loadNailModel } from '../nailONNX'
 
 const MP_CDN    = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18'
 const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
@@ -335,10 +336,10 @@ export default function PhotoVisualizer() {
   const settings = { color, shape, finish, design, opacity }
   useEffect(() => { settingsRef.current = settings })
 
-  // Redraw photo when settings change (camera loop reads settingsRef directly)
+  // Redraw photo when settings change — re-run ONNX segmentation with new color/design
   useEffect(() => {
-    if (phase !== 'ready' || !imageRef.current || !handsRef.current.length) return
-    renderFrame(canvasRef.current, imageRef.current, handsRef.current, settingsRef.current)
+    if (phase !== 'ready' || !imageRef.current) return
+    segmentAndRender(canvasRef.current, imageRef.current, settingsRef.current).catch(console.error)
   }, [color, shape, finish, design, opacity, phase])
 
   const loadModel = useCallback(async (mode = 'IMAGE') => {
@@ -374,29 +375,32 @@ export default function PhotoVisualizer() {
     stopCamera()
     setError(null); setPhase('loading')
     try {
-      const model = await loadModel('IMAGE')
-      const url   = URL.createObjectURL(file)
-      const img   = new Image()
-      img.src     = url
+      // Pre-warm ONNX model in parallel with image load
+      const modelPromise = loadNailModel()
+
+      const url = URL.createObjectURL(file)
+      const img = new Image()
+      img.src   = url
       await new Promise((res, rej) => { img.onload = res; img.onerror = rej })
 
-      const canvas      = canvasRef.current
-      canvas.width      = img.naturalWidth
-      canvas.height     = img.naturalHeight
-      imageRef.current  = img
+      const canvas     = canvasRef.current
+      canvas.width     = img.naturalWidth
+      canvas.height    = img.naturalHeight
+      imageRef.current = img
 
-      const results        = model.detect(img)
-      handsRef.current     = results.landmarks ?? []
-      setDetected(handsRef.current.length)
+      await modelPromise  // ensure ONNX is ready
 
-      renderFrame(canvas, img, handsRef.current, settingsRef.current)
+      // ML segmentation: detects nail masks directly from pixels
+      const count = await segmentAndRender(canvas, img, settingsRef.current)
+      setDetected(count)
+
       setPhase('ready')
     } catch (e) {
       console.error(e)
       setError('Не удалось обработать фото. Попробуйте другое изображение.')
       setPhase('idle')
     }
-  }, [loadModel, stopCamera])
+  }, [stopCamera])
 
   const startCamera = useCallback(async () => {
     setError(null); setPhase('loading')
@@ -510,8 +514,8 @@ export default function PhotoVisualizer() {
             {phase === 'ready' && (
               <div className={styles.badge}>
                 {detected > 0
-                  ? `✓ ${detected === 1 ? '1 рука' : '2 руки'} · ${detected * 5} ногтей`
-                  : '⚠️ Руки не найдены — попробуйте другое фото'}
+                  ? `✓ ML: ${detected} ногт${detected === 1 ? 'ь' : detected < 5 ? 'я' : 'ей'} найдено`
+                  : '⚠️ Ногти не найдены — попробуйте другое фото'}
               </div>
             )}
             {phase === 'camera' && (
