@@ -86,19 +86,16 @@ function drawNail(ctx, tip, dip, nailW, s, W, H) {
   const segLen = Math.hypot(dx, dy)
   if (segLen < 4) return
 
-  // Nail height: DIP→TIP covers exactly the distal phalanx where the nail lives.
-  // Factor 0.90 keeps the nail within that segment; free edge aligns with fingertip.
-  const nH = segLen * 0.92
-  const nW = nailW           // width comes from MCP-span reference
+  // nH = 0.82 * DIP-TIP.  Center at 70% toward tip so:
+  //   free_edge  = center + dir*hH ≈ TIP + 11%  (covers free edge)
+  //   cuticle    = center - dir*hH ≈ DIP + 29%  (sits above DIP, at actual cuticle line)
+  const nH = segLen * 0.82
+  const nW = nailW
   const hh = nH / 2, hw = nW / 2
   const angle = Math.atan2(dy, dx)
 
-  // cx = free edge at ~fingertip, cuticle at ~DIP
-  // With nH=0.92*segLen and center at 0.54*tip+0.46*dip:
-  //   free_edge = center + dir*hH ≈ tip + 0.08*segLen past tip  (tiny overhang)
-  //   cuticle   = center - dir*hH ≈ dip + 0.08*segLen toward tip (near DIP)
-  const cx = tx * 0.54 + bx * 0.46
-  const cy = ty * 0.54 + by * 0.46
+  const cx = tx * 0.70 + bx * 0.30
+  const cy = ty * 0.70 + by * 0.30
 
   const path = buildPath(s.shape, nW, nH)
 
@@ -298,9 +295,9 @@ function renderFrame(canvas, source, hands, s, mirror = false) {
       const segLen    = Math.hypot(tx - bx, ty - by)
       if (segLen < 4) continue
       const angle     = Math.atan2(ty - by, tx - bx)
-      const nH        = segLen * 0.92
-      const cx        = tx * 0.54 + bx * 0.46
-      const cy        = ty * 0.54 + by * 0.46
+      const nH        = segLen * 0.82
+      const cx        = tx * 0.70 + bx * 0.30
+      const cy        = ty * 0.70 + by * 0.30
 
       // Pixel-level refinement: find actual nail edges in the source image
       const nailW = refineNailWidth(ctx, cx, cy, angle, baseW[i], nH, W, H)
