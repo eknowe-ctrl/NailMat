@@ -2,7 +2,8 @@ import { NavLink } from 'react-router-dom'
 import styles from './Header.module.css'
 
 const NAV = [
-  { to: '/visualizer', label: 'Визуализатор' },
+  { to: '/photo',      label: 'AR-фото' },
+  { to: '/visualizer', label: 'Конструктор' },
   { to: '/calculator', label: 'Калькулятор' },
   { to: '/catalog',    label: 'Каталог' },
 ]

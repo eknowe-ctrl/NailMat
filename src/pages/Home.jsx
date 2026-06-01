@@ -3,11 +3,18 @@ import styles from './Home.module.css'
 
 const TOOLS = [
   {
+    to: '/photo',
+    icon: '📷',
+    tag: 'AR-режим',
+    title: 'Визуализатор на фото',
+    desc: 'Загрузите фото руки или включите камеру — ИИ определяет ногти и накладывает дизайн. Фото не уходит на сервер.',
+  },
+  {
     to: '/visualizer',
     icon: '💅',
-    tag: 'Интерактив',
-    title: 'Визуализатор',
-    desc: 'Примерьте форму ногтей, цвет лака и дизайн — и отправьте готовый референс мастеру.',
+    tag: 'Конструктор',
+    title: 'SVG-конструктор',
+    desc: 'Примерьте форму ногтей, цвет лака и дизайн на интерактивной модели руки.',
   },
   {
     to: '/calculator',
@@ -41,7 +48,7 @@ export default function Home() {
             дистрибьюторов — в одном месте.
           </p>
           <div className={styles.heroCta}>
-            <Link to="/visualizer" className="btn-primary">Попробовать</Link>
+            <Link to="/photo" className="btn-primary">Попробовать AR</Link>
             <Link to="/calculator" className="btn-outline">Считать прибыль</Link>
           </div>
         </div>
