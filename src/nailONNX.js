@@ -59,18 +59,88 @@ function hexToRgb(hex) {
 
 // ── preprocessing ─────────────────────────────────────────────────────────────
 
+function extractTensor(canvas, W, H) {
+  const { data } = canvas.getContext('2d').getImageData(0, 0, W, H)
+  const t = new Float32Array(3 * W * H)
+  for (let i = 0; i < W * H; i++) {
+    t[i]           = data[i*4]   / 255
+    t[W*H   + i]   = data[i*4+1] / 255
+    t[W*H*2 + i]   = data[i*4+2] / 255
+  }
+  return new ort.Tensor('float32', t, [1, 3, H, W])
+}
+
 function preprocess(source, W, H) {
   const tmp = document.createElement('canvas')
   tmp.width = W; tmp.height = H
   tmp.getContext('2d').drawImage(source, 0, 0, W, H)
-  const { data } = tmp.getContext('2d').getImageData(0, 0, W, H)
-  const t = new Float32Array(3 * W * H)
-  for (let i = 0; i < W * H; i++) {
-    t[i]         = data[i*4]   / 255
-    t[W*H   + i] = data[i*4+1] / 255
-    t[W*H*2 + i] = data[i*4+2] / 255
+  return extractTensor(tmp, W, H)
+}
+
+// Horizontal mirror of the source (covers L/R orientation bias)
+function preprocessFlipH(source, W, H) {
+  const tmp = document.createElement('canvas')
+  tmp.width = W; tmp.height = H
+  const ctx = tmp.getContext('2d')
+  ctx.translate(W, 0); ctx.scale(-1, 1)
+  ctx.drawImage(source, 0, 0, W, H)
+  return extractTensor(tmp, W, H)
+}
+
+// 90° CW rotation (covers sideways hand orientation)
+function preprocess90CW(source, W, H) {
+  const SW = source.naturalWidth  || source.width  || W
+  const SH = source.naturalHeight || source.height || H
+  const rot = document.createElement('canvas')
+  rot.width = SH; rot.height = SW
+  const rCtx = rot.getContext('2d')
+  rCtx.translate(SH, 0); rCtx.rotate(Math.PI / 2)
+  rCtx.drawImage(source, 0, 0, SW, SH)
+  const tmp = document.createElement('canvas')
+  tmp.width = W; tmp.height = H
+  tmp.getContext('2d').drawImage(rot, 0, 0, W, H)
+  return extractTensor(tmp, W, H)
+}
+
+// ── TTA: coordinate un-transforms ─────────────────────────────────────────────
+
+// Mirror bboxes and masks back from flipped space
+function detsFlipH(dets) {
+  return dets.map(d => {
+    const [x1, y1, x2, y2] = d.bbox
+    const m = new Float32Array(PROTO_SZ * PROTO_SZ)
+    for (let y = 0; y < PROTO_SZ; y++)
+      for (let x = 0; x < PROTO_SZ; x++)
+        m[y * PROTO_SZ + x] = d.mask[y * PROTO_SZ + (PROTO_SZ - 1 - x)]
+    return { ...d, bbox: [INPUT_SZ - x2, y1, INPUT_SZ - x1, y2], mask: m }
+  })
+}
+
+// Rotate bboxes and masks back from 90° CW space (apply 90° CCW inverse)
+// bbox: [ry1, INPUT_SZ-rx2, ry2, INPUT_SZ-rx1]
+// mask: orig[y][x] = rotated[x][PROTO_SZ-1-y]
+function dets90CW(dets) {
+  return dets.map(d => {
+    const [x1, y1, x2, y2] = d.bbox
+    const m = new Float32Array(PROTO_SZ * PROTO_SZ)
+    for (let y = 0; y < PROTO_SZ; y++)
+      for (let x = 0; x < PROTO_SZ; x++)
+        m[y * PROTO_SZ + x] = d.mask[x * PROTO_SZ + (PROTO_SZ - 1 - y)]
+    return { ...d, bbox: [y1, INPUT_SZ - x2, y2, INPUT_SZ - x1], mask: m }
+  })
+}
+
+// Global NMS across detections merged from multiple TTA passes
+function nmsGlobal(dets) {
+  dets.sort((a, b) => b.score - a.score)
+  const kept = [], seen = new Set()
+  for (let i = 0; i < dets.length; i++) {
+    if (seen.has(i)) continue
+    kept.push(dets[i])
+    for (let j = i + 1; j < dets.length; j++)
+      if (!seen.has(j) && iou(dets[i].bbox, dets[j].bbox) > IOU_THRESH) seen.add(j)
   }
-  return new ort.Tensor('float32', t, [1, 3, H, W])
+  return kept
 }
 
 // ── post-processing ───────────────────────────────────────────────────────────
@@ -387,17 +457,22 @@ export async function segmentAndRender(canvas, source, settings, onProgress) {
   ctx.clearRect(0, 0, W, H)
   ctx.drawImage(source, 0, 0, W, H)
 
-  const inputTensor = preprocess(source, INPUT_SZ, INPUT_SZ)
-  const outputs = await session.run({ images: inputTensor })
-  const keys = Object.keys(outputs)
-  const out0 = outputs[keys[0]].data
-  const out1 = outputs[keys[1]].data
+  async function infer(tensor) {
+    const out  = await session.run({ images: tensor })
+    const keys = Object.keys(out)
+    return postProcess(out[keys[0]].data, out[keys[1]].data)
+  }
 
-  const dets = postProcess(out0, out1)
+  // 3-pass TTA: original + horizontal flip + 90° CW rotation
+  // Covers standard, L/R-mirrored and sideways hand orientations
+  const pass0 = await infer(preprocess(source, INPUT_SZ, INPUT_SZ))
+  const pass1 = detsFlipH(await infer(preprocessFlipH(source, INPUT_SZ, INPUT_SZ)))
+  const pass2 = dets90CW(await infer(preprocess90CW(source, INPUT_SZ, INPUT_SZ)))
+
+  const dets   = nmsGlobal([...pass0, ...pass1, ...pass2])
   const scaleX = W / INPUT_SZ
   const scaleY = H / INPUT_SZ
 
   for (const det of dets) drawDetection(ctx, det, scaleX, scaleY, settings, source)
-
   return dets.length
 }

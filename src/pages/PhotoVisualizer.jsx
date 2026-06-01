@@ -228,7 +228,10 @@ export default function PhotoVisualizer() {
                     <p className={styles.overlayHint}>45 МБ · только первый раз</p>
                   </>
                 ) : loadPct === 100 ? (
-                  <p className={styles.overlayText}>Анализируем ногти…</p>
+                  <>
+                    <p className={styles.overlayText}>Анализируем ногти…</p>
+                    <p className={styles.overlayHint}>3 ракурса · ~15 сек</p>
+                  </>
                 ) : (
                   <p className={styles.overlayText}>Подготовка…</p>
                 )}
