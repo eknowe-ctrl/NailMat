@@ -109,6 +109,89 @@ function postProcess(out0, out1) {
   return kept.map(d => ({ ...d, mask: computeMask(d.coefs, out1) }))
 }
 
+// ── mask refinement ───────────────────────────────────────────────────────────
+// Builds an ow×oh alpha canvas for one detection.
+// Uses a steepened sigmoid (not hard binary) at proto resolution, bilinear
+// upscale, then color-guided boundary correction: boundary pixels are nudged
+// toward "inside" or "outside" based on similarity to the average nail vs skin
+// colour sampled from the source photo. This snaps ambiguous mask edges to
+// real nail contours without needing a higher-res model.
+
+function buildRefinedMaskCanvas(mask, source, ix1, iy1, ix2, iy2, ow, oh) {
+  const px1 = Math.max(0, Math.floor(ix1 * PROTO_SZ / INPUT_SZ))
+  const py1 = Math.max(0, Math.floor(iy1 * PROTO_SZ / INPUT_SZ))
+  const px2 = Math.min(PROTO_SZ, Math.ceil(ix2 * PROTO_SZ / INPUT_SZ))
+  const py2 = Math.min(PROTO_SZ, Math.ceil(iy2 * PROTO_SZ / INPUT_SZ))
+  const pw = px2 - px1, ph = py2 - py1
+  if (pw <= 0 || ph <= 0) return null
+
+  // 1. Smooth proto-crop canvas via steepened sigmoid (v=0.5→128, v=0.65→250)
+  const rawMc   = document.createElement('canvas')
+  rawMc.width   = pw; rawMc.height = ph
+  const rawCtx  = rawMc.getContext('2d')
+  const rawImg  = rawCtx.createImageData(pw, ph)
+  for (let y = 0; y < ph; y++) {
+    for (let x = 0; x < pw; x++) {
+      const v  = mask[(y + py1) * PROTO_SZ + (x + px1)]
+      const s  = 1 / (1 + Math.exp(-(v - 0.5) * 16))
+      const a  = Math.round(s * 255)
+      const ii = (y * pw + x) * 4
+      rawImg.data[ii] = rawImg.data[ii+1] = rawImg.data[ii+2] = a
+      rawImg.data[ii+3] = a
+    }
+  }
+  rawCtx.putImageData(rawImg, 0, 0)
+
+  // 2. Bilinear upscale to output size → anti-aliased boundary
+  const mc    = document.createElement('canvas')
+  mc.width    = ow; mc.height = oh
+  const mCtx  = mc.getContext('2d', { willReadFrequently: true })
+  mCtx.drawImage(rawMc, 0, 0, pw, ph, 0, 0, ow, oh)
+
+  // 3. Sample source photo in bbox region at output size
+  const sW     = source.naturalWidth  || source.width  || ow
+  const sH     = source.naturalHeight || source.height || oh
+  const cropC  = document.createElement('canvas')
+  cropC.width  = ow; cropC.height = oh
+  const cropCtx = cropC.getContext('2d', { willReadFrequently: true })
+  cropCtx.drawImage(source,
+    ix1 / INPUT_SZ * sW, iy1 / INPUT_SZ * sH,
+    (ix2 - ix1) / INPUT_SZ * sW, (iy2 - iy1) / INPUT_SZ * sH,
+    0, 0, ow, oh
+  )
+  const srcPx  = cropCtx.getImageData(0, 0, ow, oh).data
+  const upData = mCtx.getImageData(0, 0, ow, oh)
+  const ap     = upData.data
+
+  // 4. Accumulate average colour of definite inside / outside regions
+  let iR=0,iG=0,iB=0,iN=0, oR=0,oG=0,oB=0,oN=0
+  for (let i = 0; i < ow * oh; i++) {
+    const a = ap[i*4+3]
+    if (a > 210) { iR+=srcPx[i*4]; iG+=srcPx[i*4+1]; iB+=srcPx[i*4+2]; iN++ }
+    else if (a < 45) { oR+=srcPx[i*4]; oG+=srcPx[i*4+1]; oB+=srcPx[i*4+2]; oN++ }
+  }
+
+  // 5. Color-guided boundary nudge (only if we have enough samples from both sides)
+  if (iN > 20 && oN > 20) {
+    iR/=iN; iG/=iN; iB/=iN
+    oR/=oN; oG/=oN; oB/=oN
+    for (let i = 0; i < ow * oh; i++) {
+      const a = ap[i*4+3]
+      if (a <= 45 || a >= 210) continue
+      const r = srcPx[i*4], g = srcPx[i*4+1], b = srcPx[i*4+2]
+      const dI    = (r-iR)**2 + (g-iG)**2 + (b-iB)**2
+      const dO    = (r-oR)**2 + (g-oG)**2 + (b-oB)**2
+      const nudge = dI <= dO ? 0.4 : -0.4
+      const fa    = Math.min(255, Math.max(0, Math.round(a + nudge * 255)))
+      ap[i*4] = ap[i*4+1] = ap[i*4+2] = fa
+      ap[i*4+3] = fa
+    }
+    mCtx.putImageData(upData, 0, 0)
+  }
+
+  return mc
+}
+
 // ── shape clip ────────────────────────────────────────────────────────────────
 // Intersects the ONNX mask with the selected shape using destination-in.
 // Shapes are defined in bbox coords: tip at y=0, cuticle at y=oh.
@@ -151,7 +234,7 @@ function applyShapeClip(ctx, ow, oh, shape) {
 
 // ── rendering ─────────────────────────────────────────────────────────────────
 
-function drawDetection(ctx, det, scaleX, scaleY, settings) {
+function drawDetection(ctx, det, scaleX, scaleY, settings, source) {
   const { bbox, mask } = det
   const [ix1, iy1, ix2, iy2] = bbox
 
@@ -160,37 +243,20 @@ function drawDetection(ctx, det, scaleX, scaleY, settings) {
   const sh  = (iy2 - iy1) * scaleY
   if (sw < 4 || sh < 4) return
 
-  // ── 1. Build clean binary mask canvas (proto-space crop) ────────────────────
-  const mx1 = Math.max(0, Math.floor(ix1 * PROTO_SZ / INPUT_SZ))
-  const my1 = Math.max(0, Math.floor(iy1 * PROTO_SZ / INPUT_SZ))
-  const mx2 = Math.min(PROTO_SZ, Math.ceil(ix2 * PROTO_SZ / INPUT_SZ))
-  const my2 = Math.min(PROTO_SZ, Math.ceil(iy2 * PROTO_SZ / INPUT_SZ))
-  const mw = mx2 - mx1, mh = my2 - my1
-  if (mw <= 0 || mh <= 0) return
-
-  const mc   = document.createElement('canvas')
-  mc.width   = mw; mc.height = mh
-  const mCtx = mc.getContext('2d')
-  const mData = mCtx.createImageData(mw, mh)
-  for (let y = 0; y < mh; y++) {
-    for (let x = 0; x < mw; x++) {
-      if (mask[(y + my1) * PROTO_SZ + (x + mx1)] < 0.5) continue
-      const ii = (y * mw + x) * 4
-      mData.data[ii] = mData.data[ii+1] = mData.data[ii+2] = mData.data[ii+3] = 255
-    }
-  }
-  mCtx.putImageData(mData, 0, 0)
-
-  // ── 2. Offscreen canvas (screen-size bbox) ───────────────────────────────────
   const ow = Math.ceil(sw), oh = Math.ceil(sh)
+
+  // ── 1. Build edge-refined mask canvas (ow×oh) ─────────────────────────────────
+  const mc = buildRefinedMaskCanvas(mask, source, ix1, iy1, ix2, iy2, ow, oh)
+  if (!mc) return
+
+  // ── 2. Offscreen canvas (screen-size bbox) ────────────────────────────────────
   const oc   = document.createElement('canvas')
   oc.width   = ow; oc.height = oh
   const oCtx = oc.getContext('2d')
 
-  // Scale ONNX mask to screen size — bilinear interpolation anti-aliases edges
-  oCtx.drawImage(mc, 0, 0, mw, mh, 0, 0, ow, oh)
+  oCtx.drawImage(mc, 0, 0)   // mc already at ow×oh with refined alpha
 
-  // ── 3. Apply shape clip (intersect mask × shape) ─────────────────────────────
+  // ── 3. Apply shape clip (intersect mask × shape) ──────────────────────────────
   applyShapeClip(oCtx, ow, oh, settings.shape)
 
   // ── 4. Fill nail color inside mask×shape ─────────────────────────────────────
@@ -331,7 +397,7 @@ export async function segmentAndRender(canvas, source, settings, onProgress) {
   const scaleX = W / INPUT_SZ
   const scaleY = H / INPUT_SZ
 
-  for (const det of dets) drawDetection(ctx, det, scaleX, scaleY, settings)
+  for (const det of dets) drawDetection(ctx, det, scaleX, scaleY, settings, source)
 
   return dets.length
 }
