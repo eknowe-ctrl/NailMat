@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import styles from './PhotoVisualizer.module.css'
 import { segmentAndRender, loadNailModel } from '../nailONNX'
-import { detectAndDrawHands } from '../handLandmarks'
 
 const PALETTE = [
   '#FADADD','#F4A7B9','#E8A0BF','#C780C8','#9B59B6',
@@ -44,11 +43,7 @@ export default function PhotoVisualizer() {
   // Redraw when settings change (photo mode only)
   useEffect(() => {
     if (phase !== 'ready' || !imageRef.current) return
-    const img = imageRef.current
-    const canvas = canvasRef.current
-    segmentAndRender(canvas, img, settingsRef.current)
-      .then(() => detectAndDrawHands(canvas, img).catch(() => {}))
-      .catch(console.error)
+    segmentAndRender(canvasRef.current, imageRef.current, settingsRef.current).catch(console.error)
   }, [color, shape, finish, design, opacity, phase])
 
   const stopCamera = useCallback(() => {
@@ -80,7 +75,6 @@ export default function PhotoVisualizer() {
       )
       setDetected(count)
       setPhase('ready')
-      detectAndDrawHands(canvas, img).catch(() => {})
     } catch (e) {
       console.error(e)
       setError(`Ошибка: ${e?.message ?? String(e)}`)
@@ -151,7 +145,6 @@ export default function PhotoVisualizer() {
       )
       setDetected(count)
       setPhase('ready')
-      detectAndDrawHands(canvas, img).catch(() => {})
     } catch (e) {
       console.error(e)
       setError(`Ошибка: ${e?.message ?? String(e)}`)
