@@ -4,8 +4,8 @@ ort.env.wasm.wasmPaths  = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/d
 ort.env.wasm.numThreads = 1   // GitHub Pages lacks COOP/COEP headers → no SharedArrayBuffer
 
 const MODEL_PATH  = `${import.meta.env.BASE_URL}models/nails_seg.onnx`
-const INPUT_SZ    = 320
-const PROTO_SZ    = 80
+const INPUT_SZ    = 640   // v2 model: 640×640 input → 160×160 proto masks
+const PROTO_SZ    = 160
 const N_MASK_COEF = 32
 const CONF_THRESH = 0.28
 const IOU_THRESH  = 0.40
@@ -157,7 +157,7 @@ function computeMask(coefs, protos) {
 }
 
 function postProcess(out0, out1) {
-  const N = 2100
+  const N = 8400   // 640×640 input: 6400+1600+400 anchors
   const dets = []
   for (let i = 0; i < N; i++) {
     const score = out0[4 * N + i]
