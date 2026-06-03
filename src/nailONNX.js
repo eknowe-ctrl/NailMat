@@ -203,7 +203,7 @@ function buildRefinedMaskCanvas(mask, source, ix1, iy1, ix2, iy2, ow, oh) {
   for (let y = 0; y < ph; y++) {
     for (let x = 0; x < pw; x++) {
       const v  = mask[(y + py1) * PROTO_SZ + (x + px1)]
-      const s  = 1 / (1 + Math.exp(-(v - 0.5) * 16))
+      const s  = 1 / (1 + Math.exp(-(v - 0.43) * 14))  // shifted threshold covers more edge pixels
       const a  = Math.round(s * 255)
       const ii = (y * pw + x) * 4
       rawImg.data[ii] = rawImg.data[ii+1] = rawImg.data[ii+2] = a
@@ -321,7 +321,9 @@ function drawDetection(ctx, det, scaleX, scaleY, settings, source) {
 
   // Extension shapes grow the nail tip upward to simulate nail extensions.
   // extH = additional pixels above the natural nail tip; totalH = full canvas height.
-  const extH   = /almond|stiletto|coffin/.test(settings.shape) ? Math.round(oh * 0.55) : 0
+  // Cap by nail width so wide nails (thumb viewed at angle) don't get disproportionate extensions.
+  const extH   = /almond|stiletto|coffin/.test(settings.shape)
+    ? Math.round(Math.min(oh * 0.55, ow * 0.85)) : 0
   const totalH = oh + extH
 
   // ── 1. Build edge-refined mask canvas (ow×oh) ─────────────────────────────────
@@ -333,8 +335,8 @@ function drawDetection(ctx, det, scaleX, scaleY, settings, source) {
   oc.width   = ow; oc.height = totalH
   const oCtx = oc.getContext('2d')
 
-  // Draw mask shifted down by extH; 2px spread covers natural nail edge pixels.
-  const SP = 2
+  // Draw mask shifted down by extH; spread covers natural nail edge pixels the model underestimates.
+  const SP = 5
   oCtx.drawImage(mc, -SP, extH - SP, ow + SP*2, oh + SP*2)
 
   // For extension shapes: fill the extension zone (0→extH) via source-over union.
